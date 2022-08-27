@@ -1,5 +1,6 @@
 name: main
 on:
+  workflow_dispatch:
   push:
     tags:
       - v*
@@ -8,86 +9,119 @@ on:
   pull_request:
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-go@v3
-        with:
-          go-version: 1.17
-      - uses: actions/checkout@v3
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-          args: --timeout=300s
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    # TODO Set up Kind for integration tests.
-
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v3
-        with:
-          go-version: 1.17
-      - name: Install Kubebuilder
-        id: install-kubebuilder
-        run: |
-          os=$(go env GOOS)
-          arch=$(go env GOARCH)
-          version=2.3.1
-          curl -L https://github.com/kubernetes-sigs/kubebuilder/releases/download/v${version}/kubebuilder_${version}_${os}_${arch}.tar.gz | tar -xz -C /tmp/
-          sudo mv /tmp/kubebuilder_2.3.1_${os}_${arch} /usr/local/kubebuilder
-      - run: make test
+#  lint:
+#    name: Lint
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/setup-go@v3
+#        with:
+#          go-version: 1.17
+#      - uses: actions/checkout@v3
+#      - name: golangci-lint
+#        uses: golangci/golangci-lint-action@v3
+#        with:
+#          version: latest
+#          args: --timeout=300s
+#
+#  test:
+#    name: Test
+#    runs-on: ubuntu-latest
+#
+#    # TODO Set up Kind for integration tests.
+#
+#    steps:
+#      - uses: actions/checkout@v2
+#      - uses: actions/setup-go@v3
+#        with:
+#          go-version: 1.17
+#      - name: Install Kubebuilder
+#        id: install-kubebuilder
+#        run: |
+#          os=$(go env GOOS)
+#          arch=$(go env GOARCH)
+#          version=2.3.1
+#          curl -L https://github.com/kubernetes-sigs/kubebuilder/releases/download/v${version}/kubebuilder_${version}_${os}_${arch}.tar.gz | tar -xz -C /tmp/
+#          sudo mv /tmp/kubebuilder_2.3.1_${os}_${arch} /usr/local/kubebuilder
+#      - run: make test
 
   build:
     name: Container Build
     runs-on: ubuntu-latest
-    needs:
-    - test
-    - lint
-    if: github.event_name != 'pull_request'
-
+    # TODO: Uncomment when we reach some kind of the final version.
+#    needs:
+#    - test
+#    - lint
+#    if: github.event_name != 'pull_request'
     steps:
     - uses: actions/checkout@v2
-    - name: Docker Prep
-      id: prep
-      run: |
-        DOCKER_IMAGE="$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')"
-        VERSION=edge
-        if [[ $GITHUB_REF == refs/tags/* ]]; then
-          VERSION=${GITHUB_REF#refs/tags/}
-        elif [[ $GITHUB_REF == refs/heads/* ]]; then
-          VERSION=$(echo ${GITHUB_REF#refs/heads/} | sed -r 's#/+#-#g')
-        elif [[ $GITHUB_REF == refs/pull/* ]]; then
-          VERSION=pr-${{ github.event.number }}
-        fi
-        TAGS="${DOCKER_IMAGE}:${VERSION}"
-        if [ "${{ github.event_name }}" = "push" ]; then
-          TAGS="$TAGS,${DOCKER_IMAGE}:sha-${GITHUB_SHA::8}"
-        fi
-        echo ::set-output name=version::${VERSION}
-        echo ::set-output name=tags::${TAGS}
-        echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+#    # TODO: Do we need prep?
+#    - name: Docker Prep
+#      id: prep
+#      run: |
+#        DOCKER_IMAGE="$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')"
+#        VERSION=edge
+#        if [[ $GITHUB_REF == refs/tags/* ]]; then
+#          VERSION=${GITHUB_REF#refs/tags/}
+#        elif [[ $GITHUB_REF == refs/heads/* ]]; then
+#          VERSION=$(echo ${GITHUB_REF#refs/heads/} | sed -r 's#/+#-#g')
+#        elif [[ $GITHUB_REF == refs/pull/* ]]; then
+#          VERSION=pr-${{ github.event.number }}
+#        fi
+#        TAGS="${DOCKER_IMAGE}:${VERSION}"
+#        if [ "${{ github.event_name }}" = "push" ]; then
+#          TAGS="$TAGS,${DOCKER_IMAGE}:sha-${GITHUB_SHA::8}"
+#        fi
+#        echo ::set-output name=version::${VERSION}
+#        echo ::set-output name=tags::${TAGS}
+#        echo ::set-output name=created::$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+    - uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_STAGING }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_STAGING }}
+        aws-region: ap-southeast-2
+    - uses: aws-actions/amazon-ecr-login@v1
+      id: login-ecr
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v1
-    - name: Login to Github Container Registry
-      uses: docker/login-action@v1
+      uses: docker/setup-buildx-action@v2
+    - uses: docker/build-push-action@v3
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: canary
       with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PAT }}
-    - name: Build and push
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        file: ./Dockerfile
+        tags: $ECR_REGISTRY/migrations-operator:$IMAGE_TAG
         push: true
-        tags: ${{ steps.prep.outputs.tags }}
-        labels: |
-          org.opencontainers.image.source=${{ github.event.repository.html_url }}
-          org.opencontainers.image.created=${{ steps.prep.outputs.created }}
-          org.opencontainers.image.revision=${{ github.sha }}
+
+# TODO: How do we restart controllers?
+
+#    - name: Build, tag, and push image to Amazon ECR
+#      env:
+#        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+#        ECR_REPOSITORY: ${{ inputs.ecr-repository }}
+#        IMAGE_TAG: canary
+#      run: |
+#        docker tag service-core $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+#        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+#    - run: |
+#        aws eks --region=ap-southeast-2 update-kubeconfig --name=${{ inputs.kube-cluster }}
+#        kubectl rollout restart deployment/core --namespace=${{ inputs.kube-namespace }}
+#        kubectl rollout restart deployment/background-service --namespace=${{ inputs.kube-namespace }}
+#        kubectl rollout status deployment/core --namespace=${{ inputs.kube-namespace }}
+#        kubectl rollout status deployment/background-service --namespace=${{ inputs.kube-namespace }}
+
+#    - name: Login to Github Container Registry
+#      uses: docker/login-action@v1
+#      with:
+#          registry: ghcr.io
+#          username: ${{ github.repository_owner }}
+#          password: ${{ secrets.GHCR_PAT }}
+#    - name: Build and push
+#      uses: docker/build-push-action@v2
+#      with:
+#        context: .
+#        file: ./Dockerfile
+#        push: true
+#        tags: ${{ steps.prep.outputs.tags }}
+#        labels: |
+#          org.opencontainers.image.source=${{ github.event.repository.html_url }}
+#          org.opencontainers.image.created=${{ steps.prep.outputs.created }}
+#          org.opencontainers.image.revision=${{ github.sha }}
