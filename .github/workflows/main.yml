@@ -45,7 +45,7 @@ jobs:
 #      - run: make test
 
   build:
-    name: Container Build
+    name: Container Build & Push
     runs-on: ubuntu-latest
     # TODO: Uncomment when we reach some kind of the final version.
 #    needs:
@@ -88,7 +88,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: canary
       with:
-        tags: $ECR_REGISTRY/migrations-operator:$IMAGE_TAG
+        tags: ${ECR_REGISTRY}/migrations-operator:${IMAGE_TAG}
         push: true
 
 # TODO: How do we restart controllers?
